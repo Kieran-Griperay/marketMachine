@@ -36,17 +36,6 @@ dataFrame_scaled = scaler_feature.fit_transform(dataFrame.drop(['Close'], axis=1
 scaler_target = MinMaxScaler()
 dataFrame['Scaled_Close'] = scaler_target.fit_transform(dataFrame[['Close']])
 
-# Prepare dataset for LSTM
-def create_dataset(X, Y, n_steps):
-    Xs, Ys = [], []
-    for i in range(len(X) - n_steps):
-        Xs.append(X[i:(i + n_steps)])
-        Ys.append(Y[i + n_steps])
-    return np.array(Xs), np.array(Ys)
-
-features, target = dataFrame_scaled, dataFrame['Scaled_Close'].values
-X, Y = create_dataset(features, target, N_STEPS)
-
 # Define and compile the model #uncomment when making a new model
 # model = Sequential([
 #     LSTM(60, return_sequences=True, input_shape=(N_STEPS, X.shape[2])),
