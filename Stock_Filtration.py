@@ -3,7 +3,7 @@ import pandas as pd #DataFrames
 import yfinance as yf #Financial Analysis
 import time #Timestamps
 from concurrent.futures import ThreadPoolExecutor, as_completed #Parallel Processing
-
+##Chabnge
 
 ##DATA COLLECTION
 
