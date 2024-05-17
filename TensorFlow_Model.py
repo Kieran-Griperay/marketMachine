@@ -109,7 +109,8 @@ def showNewModelPredictions(dfs, models, scalers, week_number):
         plt.close() #Close Plot(Free up memory)
 
 #Build & Train LSTM models
-def build_and_train_model(data, n_steps):
+def build_and_train_model(data, n_steps, ticker):
+    print(f"training model{ticker}")
     scaler_feature = MinMaxScaler() #Feature Object Initialized
     scaler_target = MinMaxScaler() #Target Object Initialized
     features = scaler_feature.fit_transform(data.drop(['Close'], axis=1)) #Scale Features
@@ -145,19 +146,16 @@ for ticker, df in dfs.items():
     scaler_feature_path = f"scalers/{ticker}_scaler_feature.pkl"
     scaler_target_path = f"scalers/{ticker}_scaler_target.pkl"
 
-    if os.path.exists(weekly_model_path):
-        try:
-            model = load_model(weekly_model_path)
-            scaler_feature = joblib.load(f"scalers/{ticker}_scaler_feature.pkl")
-            scaler_target = joblib.load(f"scalers/{ticker}_scaler_target.pkl")
-            Models[ticker] = model #Store in 'Models' Dictionary
-            Scalers[ticker] = (scaler_feature, scaler_target) #Store in 'Scalers Dictionary'
-        except (IOError, FileNotFoundError):  
-            print(f"Error loading model files for {ticker}")
-            continue
-    else:
-        print(f"Model file not found for {ticker}")
-        continue
+
+    try:
+        model = load_model(weekly_model_path)
+        scaler_feature = joblib.load(f"scalers/{ticker}_scaler_feature.pkl")
+        scaler_target = joblib.load(f"scalers/{ticker}_scaler_target.pkl")
+        Models[ticker] = model #Store in 'Models' Dictionary
+        Scalers[ticker] = (scaler_feature, scaler_target) #Store in 'Scalers Dictionary'
+    except (IOError, FileNotFoundError):  
+        print(f"Error loading model files for {ticker}")
+
 
     #Perform Train-Test Split
     X = df.drop('Close', axis=1) #Feature variables
@@ -169,7 +167,7 @@ for ticker, df in dfs.items():
     X_train = add_fundamental_indicators(X_train)
 
     #Train Set: Build & Train 
-    model, scaler_feature, scaler_target = build_and_train_model(X_train, N_STEPS)
+    model, scaler_feature, scaler_target = build_and_train_model(X_train, N_STEPS, ticker)
     Models[ticker] = model
     Scalers[ticker] = (scaler_feature, scaler_target)
 
