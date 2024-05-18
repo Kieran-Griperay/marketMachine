@@ -283,3 +283,5 @@ print(f"Average Return: {average_return:.2f}%")
 results_file_path = '/Users/ryangalitzdorfer/Downloads/Market Machine/Data Collection/Backtest_Results.csv'
 backtest_results.to_csv(results_file_path, index=False)
 print(f"Results saved to: {results_file_path}")
+
+#change
