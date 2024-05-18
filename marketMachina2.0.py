@@ -32,9 +32,9 @@ year_number = now.isocalendar().year
 
 # Load data # we will need to have a different source for this data...
 tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'BRK-A', 'BRK-B', 'JPM', 'JNJ', 'V', 'WMT', 
-           'UNH', 'MA', 'PG', 'HD', 'PYPL', 'DIS', 'BABA', 'BAC', 'CMCSA', 'XOM', 'T', 'VZ', 'CRM', 'INTC', 'CSCO',
+           'UNH', 'MA', 'PG', 'FSM', 'PYPL', 'DIS', 'BABA', 'BAC', 'CMCSA', 'XOM', 'T', 'VZ', 'CRM', 'INTC', 'CSCO',
              'NFLX', 'KO', 'PEP', 'ABT', 'ADBE', 'MRK', 'NKE', 'ACN', 'NVDA', 'PFE', 'CVX', 'MCD', 'ABBV', 'COST', 
-             'WFC', 'DHR', 'AVGO', 'QCOM', 'NEE', 'TXN', 'UPS', 'TMUS']
+             'WFC', 'CDE', 'AVGO', 'QCOM', 'NEE', 'TXN', 'UPS', 'HOOD']
 dfs = {}
 for t in tickers:
     data = yf.Ticker(t)
