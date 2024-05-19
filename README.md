@@ -3,3 +3,5 @@ a model that follows technical indicators and correctly and accurately assess ma
 Market Machina: if no new weekly stock model is published, create a new one due to the program (intentially) crashing and trigggering the catch statement which automatically creates a new model for that week. Make sure you use non empty folder for the models and scalers plz I havent figured out how to create new directories yet. If someone is reading this please let me know
 
 marketMachina2.0: This machine will have to iterate through a larger list of 50 tickets. We store plots for each one, storing it in my folder. Also, going to try to have multiple more indicators for the training portion. COOL.
+
+

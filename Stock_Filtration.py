@@ -93,7 +93,7 @@ print(f"Number of Stocks After Volume Filter: {len(filtered_by_volume)}")
 
 #FILTER 3: Relative Volume 
 filtered_by_volume['relativeVolume'] = filtered_by_volume['volume'] / filtered_by_volume['averageVolume10days']
-filtered_by_relative_volume = filtered_by_volume[filtered_by_volume['relativeVolume'] > 1.5]
+filtered_by_relative_volume = filtered_by_volume[filtered_by_volume['relativeVolume'] > 2]
 print(f"Number of Stocks After Relative Volume Filter: {len(filtered_by_relative_volume)}")
 
 #FILTER 4: Trending Sector
