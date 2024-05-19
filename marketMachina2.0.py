@@ -91,6 +91,7 @@ def add_technical_indicators(df):
     df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
     df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(df['Close'], timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)
     df['ATR'] = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14)
+    
     df.dropna(inplace=True)
     return df
 ticker_info = {}
@@ -110,7 +111,8 @@ def add_fundamental_indicators(df, info):
         'Enterprise_Value': info.get('enterpriseValue', None),
         'Forward_PE': info.get('forwardPE', None),
         'PEG_Ratio': info.get('pegRatio', None),
-        'Beta': info.get('beta', None)
+        'Beta': info.get('beta', None),
+        'EBITDA': info.get('ebitda', None)
     }
     for name, indicator in fundamental_indicators.items():
         df[name] = indicator
