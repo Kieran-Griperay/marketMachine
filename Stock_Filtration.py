@@ -124,64 +124,55 @@ etf_to_sector = {
 }
 top_sectors = [etf_to_sector[etf] for etf in top_5_etfs.index if etf in etf_to_sector] #Identify Top 5 Sectors
 filtered_by_sector = filtered_by_relative_volume[filtered_by_relative_volume['sector'].isin(top_sectors)] #Filter by sector
-filtered_by_sector = filtered_by_sector.sort_values(by='marketCap', ascending=False)
+filtered_by_sector = filtered_by_sector.sort_values(by='marketCap', ascending=False) #Sort by Market Cap
 print(f"Number of Stocks After Sector Filter: {len(filtered_by_sector)}")
-print(f"Today's Selected Stocks", filtered_by_sector.head(50))
+print(f"Today's Selected Stocks", filtered_by_sector.head(50)) #See Stock Selection
 
 
 
 ##BACKTEST
-
+#Get Historical Data
 def fetch_historical_data(symbols, start_date, end_date):
     data = {}
-    with ThreadPoolExecutor(max_workers=50) as executor:  # Increased max workers
-        futures = {executor.submit(yf.Ticker(symbol).history, start=start_date, end=end_date): symbol for symbol in symbols}
-        for future in as_completed(futures):
-            symbol = futures[future]
-            try:
-                data[symbol] = future.result()
+    with ThreadPoolExecutor(max_workers=50) as executor:  #Increased max workers
+        futures = {executor.submit(yf.Ticker(symbol).history, start=start_date, end=end_date): symbol for symbol in symbols} #Fetch for each symbol
+        for future in as_completed(futures): #Iterate over future objects
+            symbol = futures[future] #Retrieve symbol from futures dictionary
+            try: #Error detection
+                data[symbol] = future.result() #Historical data stored in dictionary
             except Exception as e:
                 print(f"Error fetching data for {symbol}: {e}")
     return data
 
-# Optimized backtest function with logging
+#Optimized backtest function
 def optimized_backtest(df, start_date, end_date, lookback_period=5):
     results = []
-
-    # Convert end_date to Timestamp for comparison
-    end_date = pd.Timestamp(end_date)
-
-    # Define the date range for backtesting
-    date_range = pd.date_range(start=start_date, end=end_date - datetime.timedelta(days=lookback_period))
-    
-    # Fetch historical data for the entire period in one batch
-    symbols = df.index.unique()
+    end_date = pd.Timestamp(end_date) #Timestamp for comparison
+    date_range = pd.date_range(start=start_date, end=end_date - datetime.timedelta(days=lookback_period)) 
+    symbols = df.index.unique() #Get unique symbols
     print(f"Fetching historical data for symbols: {symbols}")
-    historical_data = fetch_historical_data(symbols, start_date, end_date)
-
-    # Iterate over each date from start_date to end_date - lookback_period
+    historical_data = fetch_historical_data(symbols, start_date, end_date) #Use historical data function
+    #Iterate over each date from lookback period
     for current_date in date_range:
         current_date_str = current_date.strftime('%Y-%m-%d')
         next_date = current_date + datetime.timedelta(days=lookback_period)
         next_date_str = next_date.strftime('%Y-%m-%d')
-
+        #Continue through loop
         if next_date > end_date:
-            break
-
+            break #Error detection
         print(f"Backtesting for period: {current_date_str} to {next_date_str}")
-
+        #Go through each symbol for each day
         for symbol in symbols:
-            data = historical_data.get(symbol)
+            data = historical_data.get(symbol) #Get data
             if data is not None:
                 data_slice = data.loc[current_date_str:next_date_str]
-                if len(data_slice) > 1:  # Ensure we have enough data points
-                    opening_price = data_slice['Open'].iloc[0]
-                    closing_price = data_slice['Close'].iloc[-1]
-                    price_change = closing_price - opening_price
-                    percentage_change = (price_change / opening_price) * 100
-
-                    print(f"Symbol: {symbol}, Opening Price: {opening_price}, Closing Price: {closing_price}, Price Change: {price_change}, Percentage Change: {percentage_change}")
-
+                if len(data_slice) > 1: #Ensure we have enough data points
+                    opening_price = data_slice['Open'].iloc[0] #Get opening price
+                    closing_price = data_slice['Close'].iloc[-1] #Get closing price
+                    price_change = closing_price - opening_price #Get price change
+                    percentage_change = (price_change / opening_price) * 100 #Get percentage change
+                    print(f"Symbol: {symbol}, Opening Price: {opening_price}, Closing Price: {closing_price}, Price Change: {price_change}, Percentage Change: {percentage_change}") 
+                    #Store dictionary
                     results.append({
                         'Date': current_date_str,
                         'Symbol': symbol,
@@ -190,18 +181,15 @@ def optimized_backtest(df, start_date, end_date, lookback_period=5):
                         'PriceChange': price_change,
                         'PercentageChange': percentage_change
                     })
-                    
+    #Store in DataFrame                
     results_df = pd.DataFrame(results)
     return results_df
 
-# Apply basic filtration criteria (size, liquidity, attention, sector) dynamically for each batch of dates
+#Apply Dynamic Filtration 
 def dynamic_filtration_and_backtest(start_date, end_date, batch_size=30):
     results = []
-
-    # Convert end_date to Timestamp for comparison
-    end_date = pd.Timestamp(end_date)
-
-    # Define sectors mapping for ETFs
+    end_date = pd.Timestamp(end_date) 
+    #Map ETFs
     etf_to_sector = {
         'XLY': 'Consumer Cyclical',
         'XLP': 'Consumer Defensive',
@@ -215,73 +203,52 @@ def dynamic_filtration_and_backtest(start_date, end_date, batch_size=30):
         'XLU': 'Utilities',
         'XLC': 'Communication Services'
     }
-
-    # Iterate over each batch of dates from start_date to end_date
-    date_range = pd.date_range(start=start_date, end=end_date, freq=f'{batch_size}D')
+    #Iterate over specified dates
+    date_range = pd.date_range(start=start_date, end=end_date, freq=f'{batch_size}D') #Set range
     for current_date in date_range:
         next_date = current_date + datetime.timedelta(days=batch_size)
         if next_date > end_date:
             next_date = end_date
-
         current_date_str = current_date.strftime('%Y-%m-%d')
         next_date_str = next_date.strftime('%Y-%m-%d')
-
-        # Apply dynamic filtration
+        #Apply Filtration methods
         filtered_data = complete_data[
-            (complete_data['marketCap'] > 300000000) &
-            (complete_data['averageVolume10days'] > 500000)
+            (complete_data['marketCap'] > 300000000) & #Market Cap
+            (complete_data['averageVolume10days'] > 500000) #Average Volume
         ].copy()
         filtered_data['relativeVolume'] = filtered_data['volume'] / filtered_data['averageVolume10days']
-        filtered_data = filtered_data[filtered_data['relativeVolume'] > 1.5]
-
-        # Filter by trending sectors (use ETF data for the past 3 months from the current date)
+        filtered_data = filtered_data[filtered_data['relativeVolume'] > 2] #Relative Volume
+        #Trending Sectors
         etf_data = {}
         for symbol in etf_to_sector.keys():
             etf = yf.Ticker(symbol)
             data = etf.history(start=(current_date - datetime.timedelta(days=90)).strftime('%Y-%m-%d'), end=current_date_str)
             etf_data[symbol] = data['Close']
         etf_df = pd.DataFrame(etf_data)
-        returns = (etf_df.iloc[-1] / etf_df.iloc[0] - 1) * 100
+        returns = (etf_df.iloc[-1] / etf_df.iloc[0] - 1) * 100 #Calculate percentage
         top_5_etfs = returns.sort_values(ascending=False).head(5)
         top_sectors = [etf_to_sector[etf] for etf in top_5_etfs.index if etf in etf_to_sector]
-
         filtered_data = filtered_data[filtered_data['sector'].isin(top_sectors)]
-        filtered_data = filtered_data.sort_values(by='marketCap', ascending=False)
-
-        # Set basic_filtration for the current date
+        filtered_data = filtered_data.sort_values(by='marketCap', ascending=False) #Sort by Market Cap
+        #Create DataFrame to store results
         basic_filtration = filtered_data.copy()
         basic_filtration.set_index('symbol', inplace=True)
-
         print(f"Filtering completed for date: {current_date_str}, filtered stocks: {basic_filtration.index}")
-
-        # Perform backtest for the dynamically filtered stocks
-        backtest_results = optimized_backtest(basic_filtration, current_date, next_date)
-
+        backtest_results = optimized_backtest(basic_filtration, current_date, next_date) 
         results.extend(backtest_results.to_dict('records'))
-
-    results_df = pd.DataFrame(results)
+    results_df = pd.DataFrame(results) 
     return results_df
-
-# Define the backtest period
+#Define Backtest Period
 start_date = (datetime.datetime.now() - datetime.timedelta(days=2*365)).date()
 end_date = datetime.datetime.now().date()
-
-# Perform the dynamic filtration and backtest
 backtest_results = dynamic_filtration_and_backtest(start_date, end_date)
-
-# Ensure all results are included and displayed
 print(f"Number of results: {len(backtest_results)}")
 print("Backtest Results (first 50 rows):")
 print(backtest_results.head(50))
-
-# Calculate average returns
-average_return = backtest_results['PercentageChange'].mean()
-
+average_return = backtest_results['PercentageChange'].mean() #Calculate Average Returns
 print(f"Average Return: {average_return:.2f}%")
-
-# Save the results to a CSV file
+#Save CSV File
 results_file_path = '/Users/ryangalitzdorfer/Downloads/Market Machine/Data Collection/Backtest_Results.csv'
 backtest_results.to_csv(results_file_path, index=False)
 print(f"Results saved to: {results_file_path}")
 
-#change
