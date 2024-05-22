@@ -1,102 +1,97 @@
 #Import Libraries
-import pandas as pd #DataFrames
 import yfinance as yf #Financial Analysis
-import time #Timestamps
+import pandas as pd #DataFrames
+import datetime #Timestamps
 from concurrent.futures import ThreadPoolExecutor, as_completed #Parallel Processing
-import datetime #Backtesting
-
+import talib #Technical Analysis
 
 
 ##DATA COLLECTION
-#Get Stocks from NASDAQ & NYSE
-file_path = '/Users/ryangalitzdorfer/Downloads/Market Machine/Data Collection/Stock_Listings.csv' #Store file path
-stock_data = pd.read_csv(file_path) #Read file path
-filtered_stocks = stock_data[(stock_data['exchange'] == 'NASDAQ') | (stock_data['exchange'] == 'NYSE')] #Select Stocks on NASDAQ or NYSE
-filtered_stocks.to_csv('/Users/ryangalitzdorfer/Downloads/Market Machine/Data Collection/NYSE_&_NASDAQ_Stocks.csv', index=False) #Save as new CSV
-print(filtered_stocks.head(50)) #See DataFrame
-print(len(filtered_stocks)) #See number of stocks
+#Original CSV
+print("Loading CSV File...") 
+file_path = '/Users/ryangalitzdorfer/Downloads/Market Machine/Stock Filtration/Merged_Stocks.csv' #Get list of stocks
+tickers_df = pd.read_csv(file_path) #Read stocks
+print("CSV file loaded successfully.")
+tickers = tickers_df['symbol'].tolist() #Extract Tickers using 'symbol' column
+print(f"Extracted {len(tickers)} Tickers.") #How many Tickers are there
 
-#Mapping for exchanges to their Yahoo Finance codes
-exchange_mapping = {
-    'NASDAQ': '',  #Empty string for NASDAQ 
-    'NYSE': ''     #Empty string for NYSE 
-}
+#New DataFrame
+yesterdays_data = pd.DataFrame()
 
-#Initialize Dictionary with useful metrics for filtration
-additional_info = ['marketCap', 'trailingPE', 'forwardPE', 'dividendYield', 'volume' ,'averageVolume10days',
-                   'profitMargins', 'sector', 'Open', 'Close']
-extended_data = {info: [] for info in ['symbol'] + additional_info} #Store fetched data for each symbol
+#Timing
+now = datetime.datetime.now()
+market_close_time = now.replace(hour=16, minute=0, second=0, microsecond=0) #Get Last Day's Close
+if now > market_close_time: 
+    yesterday = now
+else:
+    yesterday = now - datetime.timedelta(days=1)
+if yesterday.weekday() == 5:  # Saturday
+    yesterday = yesterday - datetime.timedelta(days=1)
+elif yesterday.weekday() == 6:  # Sunday
+    yesterday = yesterday - datetime.timedelta(days=2)
+yesterday_str = yesterday.strftime('%Y-%m-%d')
+today_str = now.strftime('%Y-%m-%d')
+print(f"Fetching data for {yesterday_str}.")
 
-#Preferred stock, warrant, or specific index
-def is_preferred_or_warrant(ticker):
-    return '-' in ticker or '.' in ticker
-
-#Process a single ticker and fetch data
-def fetch_data_for_ticker(row):
-    ticker = row['symbol']
-    exchange = row['exchange']
-    if exchange in exchange_mapping: #Adjust ticker using exchange mapping
-        ticker = f"{ticker}"  
-    if is_preferred_or_warrant(ticker): #Skip preferred stocks and warrants
-        #print(f"Skipping preferred stock or warrant: {ticker}") #Error Detection
-        return None
-    stock = yf.Ticker(ticker) #Creates instance
+#Fetch Data for Single Ticker
+def fetch_data(ticker):
+    print(f"Processing Ticker: {ticker}") 
     try:
-        info = stock.info #Fetches financial data
-        if info and 'marketCap' in info: #Check if Yahoo can find data
-            data = {'symbol': row['symbol']} #Store individual stock info
-            for field in additional_info: #Retrieve corresponding data from Yahoo
-                data[field] = info.get(field, pd.NA) #Store data
-            return data
+        stock = yf.Ticker(ticker) #Get data for Ticker
+        hist = stock.history(start=(yesterday - datetime.timedelta(days=50)).strftime('%Y-%m-%d'), end=today_str) #Used for OBV
+        if not hist.empty and len(hist) >= 35: #Ensure not empty date
+            print(f"Data Fetched for {ticker}.")
+            hist['symbol'] = ticker
+            hist['marketCap'] = stock.info.get('marketCap', 'N/A') #Market Cap
+            hist['sector'] = stock.info.get('sector', 'N/A') #Sector
+            hist['averageVolume10days'] = stock.info.get('averageVolume10days', 'N/A') #Volume over last 10 Days
+            hist['adx'] = talib.ADX(hist['High'], hist['Low'], hist['Close'], timeperiod=14)
+            #Keep Last Day's Data
+            last_day_data = hist.iloc[-1:]
+            return last_day_data
         else:
-            print("") #Error Detection
-            #print(f"No data found for {ticker}, skipping...") #Error detection
+            print(f"No data available for {ticker}.") #Error Detection
+            return None
     except Exception as e:
-        print("") #Error Detection
-        print(f"Error fetching data for {ticker}: {e}") #Error detection
-    return None
-
+        print(f"Error processing ticker {ticker}: {e}") #Error Detection
+        return None
+    
 #Parallel Processing
-def process_stocks_in_parallel(stocks):
-    results = []
-    with ThreadPoolExecutor(max_workers=50) as executor: #Process 50 simultaneously
-        futures = [executor.submit(fetch_data_for_ticker, row) for _, row in stocks.iterrows()] #Iterates through each row
-        for future in as_completed(futures): #Process results instantly
-            result = future.result() #Store results
-            if result:
-                results.append(result) #Add results to list
-    return results
+with ThreadPoolExecutor(max_workers=50) as executor: #50 workers
+    futures = {executor.submit(fetch_data, ticker): ticker for ticker in tickers} #Dictionary to map futures to tickers
+    for future in as_completed(futures): #Iterates
+        result = future.result() #Store results
+        if result is not None:
+            yesterdays_data = pd.concat([yesterdays_data, result]) #Join Data
 
-results = process_stocks_in_parallel(filtered_stocks) #Apply function
-for result in results: #Update extended data
-    for key, value in result.items():
-        extended_data[key].append(value)
-
-additional_df = pd.DataFrame(extended_data) #Convert to DataFrame
-
-successful_stocks = len(extended_data['symbol']) #Get number of stocks succesfully processed
-print(f"Number of Successfully Processed Stocks: {successful_stocks}") #Print length of dataframe
-
-complete_data = pd.merge(filtered_stocks, additional_df, on='symbol', how='inner') #Merge both Datasets into Complete Dataset
-complete_data.to_csv('/Users/ryangalitzdorfer/Downloads/Market Machine/Data Collection/Complete_Stocks.csv', index=False) #Save 'Complete Stocks' to DataFrame 
+#Clean up DataFrame
+yesterdays_data.reset_index(inplace=True)
+print("Columns in DataFrame:", yesterdays_data.columns) #Print columns
+yesterdays_data['marketCap'] = pd.to_numeric(yesterdays_data['marketCap'], errors='coerce') #Numeric
+yesterdays_data['averageVolume10days'] = pd.to_numeric(yesterdays_data['averageVolume10days'], errors='coerce') #Numeric
+print("Data types in DataFrame before conversion:")
+print(yesterdays_data.dtypes)
+yesterdays_data = yesterdays_data[['Date', 'Open', 'Close', 'Volume', 'symbol', 'marketCap', 'sector', 'averageVolume10days', 'adx']] #Relevant Columns
+output_file_path = '/Users/ryangalitzdorfer/Downloads/Market Machine/Stock Filtration/Yesterdays_Stock_Data.csv' #File Path
+yesterdays_data.to_csv(output_file_path, index=False) #Save to Csv
+print(f"Data Fetched & Saved to: '{output_file_path}'")
 
 
 
-##Basic Filtration (Size, Liquidity, Attention, Sector)
-#FILTER 1: Market Cap 
-filtered_by_market_cap = complete_data[complete_data['marketCap'] > 300000000]
+
+##Filtration (Size, Liquidity, Sector, Momentum, Direction?)
+#Total Stocks
+print(f"Number of Starting Stocks: {len(yesterdays_data)}")
+
+#FILTER 1: Market Cap (Size)
+filtered_by_market_cap = yesterdays_data[yesterdays_data['marketCap'] > 300000000]
 print(f"Number of Stocks After Market Cap Filter: {len(filtered_by_market_cap)}")
 
-#FILTER 2: Average Volume
+#FILTER 2: Average Volume (Liquidity)
 filtered_by_volume = filtered_by_market_cap[filtered_by_market_cap['averageVolume10days'] > 500000].copy()
 print(f"Number of Stocks After Volume Filter: {len(filtered_by_volume)}")
 
-#FILTER 3: Relative Volume 
-filtered_by_volume['relativeVolume'] = filtered_by_volume['volume'] / filtered_by_volume['averageVolume10days']
-filtered_by_relative_volume = filtered_by_volume[filtered_by_volume['relativeVolume'] > 2]
-print(f"Number of Stocks After Relative Volume Filter: {len(filtered_by_relative_volume)}")
-
-#FILTER 4: Trending Sector
+#FILTER 3: Trending ETF (Sector)
 etf_symbols = ['XLY', 'XLP', 'XLE', 'XLF', 'XLV', 'XLI', 'XLK', 'XLB', 'XLRE', 'XLU', 'XLC']
 etf_data = {} #Initialize
 for symbol in etf_symbols: #Track ETF Performances
@@ -105,9 +100,9 @@ for symbol in etf_symbols: #Track ETF Performances
     etf_data[symbol] = data['Close']  
 etf_df = pd.DataFrame(etf_data) #Save into DataFrame
 returns = (etf_df.iloc[-1] / etf_df.iloc[0] - 1) * 100  #Calculate Return as a Percentage
-top_5_etfs = returns.sort_values(ascending=False).head(5) #Sort the returns to find the top 5 performing ETFs
+top_3_etfs = returns.sort_values(ascending=False).head(3) #Sort the returns to find the top 3 performing ETFs
 print("Top 5 Performing ETFs over the Last 3 Months: ") #Display the top 5 ETFs and their performances
-print(top_5_etfs.head()) 
+print(top_3_etfs.head()) 
 #Map ETFs to their sectors
 etf_to_sector = {
     'XLY': 'Consumer Cyclical',
@@ -122,74 +117,230 @@ etf_to_sector = {
     'XLU': 'Utilities',
     'XLC': 'Communication Services'
 }
-top_sectors = [etf_to_sector[etf] for etf in top_5_etfs.index if etf in etf_to_sector] #Identify Top 5 Sectors
-filtered_by_sector = filtered_by_relative_volume[filtered_by_relative_volume['sector'].isin(top_sectors)] #Filter by sector
+top_sectors = [etf_to_sector[etf] for etf in top_3_etfs.index if etf in etf_to_sector] #Identify Top 3 Sectors
+filtered_by_sector = filtered_by_volume[filtered_by_volume['sector'].isin(top_sectors)] #Filter by sector
+filtered_by_sector = filtered_by_sector.reset_index()
 filtered_by_sector = filtered_by_sector.sort_values(by='marketCap', ascending=False) #Sort by Market Cap
 print(f"Number of Stocks After Sector Filter: {len(filtered_by_sector)}")
-print(f"Today's Selected Stocks", filtered_by_sector.head(50)) #See Stock Selection
+
+#FILTER 4: ADX (Momentum)
+filtered_by_adx = filtered_by_sector[filtered_by_sector['ADX'] > 35] #High Momentum
+print(f"Number of Stocks After ADX Filter: {len(filtered_by_adx)}")
+print(filtered_by_adx.head(50)[['symbol', 'Date', 'marketCap', 'averageVolume10days','sector', 'Open', 'Close', 'ADX']])
+
+#Filter 5: RSI (Direction)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 ##BACKTEST
-#Get Historical Data
+import pandas as pd
+import numpy as np
+import yfinance as yf
+import datetime
+import talib as ta
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing
+
+# OBV Calculation Function
+def calculate_obv(data):
+    if 'Close' not in data.columns or 'Volume' not in data.columns:
+        print("Missing 'Close' or 'Volume' columns in data.")
+        return data
+    data['OBV'] = ta.OBV(data['Close'], data['Volume'])
+    data['OBV_Trend'] = data['OBV'].diff().apply(lambda x: 2 if x > 5 else -2 if x < -5 else 1 if x > 0 else -1 if x < 0 else 0)
+    data['OBV_Trend_Sum'] = data['OBV_Trend'].rolling(window=10).sum()
+    return data
+
+# Fetch Historical Data
 def fetch_historical_data(symbols, start_date, end_date):
     data = {}
-    with ThreadPoolExecutor(max_workers=50) as executor:  #Increased max workers
-        futures = {executor.submit(yf.Ticker(symbol).history, start=start_date, end=end_date): symbol for symbol in symbols} #Fetch for each symbol
-        for future in as_completed(futures): #Iterate over future objects
-            symbol = futures[future] #Retrieve symbol from futures dictionary
-            try: #Error detection
-                data[symbol] = future.result() #Historical data stored in dictionary
+    num_cores = multiprocessing.cpu_count()
+    max_workers = min(2 * num_cores, 50)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(yf.Ticker(symbol).history, start=start_date, end=end_date): symbol for symbol in symbols}
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                data[symbol] = future.result()
             except Exception as e:
                 print(f"Error fetching data for {symbol}: {e}")
     return data
 
-#Optimized backtest function
+# Optimized Backtest Function
 def optimized_backtest(df, start_date, end_date, lookback_period=5):
     results = []
-    end_date = pd.Timestamp(end_date) #Timestamp for comparison
-    date_range = pd.date_range(start=start_date, end=end_date - datetime.timedelta(days=lookback_period)) 
-    symbols = df.index.unique() #Get unique symbols
+    end_date = pd.Timestamp(end_date)
+    date_range = pd.date_range(start=start_date, end=end_date - datetime.timedelta(days=lookback_period))
+    symbols = df.index.unique()
     print(f"Fetching historical data for symbols: {symbols}")
-    historical_data = fetch_historical_data(symbols, start_date, end_date) #Use historical data function
-    #Iterate over each date from lookback period
+    historical_data = fetch_historical_data(symbols, start_date, end_date)
+
     for current_date in date_range:
         current_date_str = current_date.strftime('%Y-%m-%d')
         next_date = current_date + datetime.timedelta(days=lookback_period)
         next_date_str = next_date.strftime('%Y-%m-%d')
-        #Continue through loop
+
         if next_date > end_date:
-            break #Error detection
+            break
+
         print(f"Backtesting for period: {current_date_str} to {next_date_str}")
-        #Go through each symbol for each day
+
         for symbol in symbols:
-            data = historical_data.get(symbol) #Get data
-            if data is not None:
+            data = historical_data.get(symbol)
+            if data is not None and not data.empty:
                 data_slice = data.loc[current_date_str:next_date_str]
-                if len(data_slice) > 1: #Ensure we have enough data points
-                    opening_price = data_slice['Open'].iloc[0] #Get opening price
-                    closing_price = data_slice['Close'].iloc[-1] #Get closing price
-                    price_change = closing_price - opening_price #Get price change
-                    percentage_change = (price_change / opening_price) * 100 #Get percentage change
-                    print(f"Symbol: {symbol}, Opening Price: {opening_price}, Closing Price: {closing_price}, Price Change: {price_change}, Percentage Change: {percentage_change}") 
-                    #Store dictionary
+                if len(data_slice) > 1:
+                    opening_price = data_slice['Open'].iloc[0]
+                    closing_price = data_slice['Close'].iloc[-1]
+                    price_change = closing_price - opening_price
+                    percentage_change = (price_change / opening_price) * 100
+
+                    print(f"Symbol: {symbol}, Opening Price: {opening_price}, Closing Price: {closing_price}, Price Change: {price_change}, Percentage Change: {percentage_change}")
+                    
+                    stock_info = df.loc[symbol]
+
                     results.append({
                         'Date': current_date_str,
                         'Symbol': symbol,
                         'OpeningPrice': opening_price,
                         'ClosingPrice': closing_price,
                         'PriceChange': price_change,
-                        'PercentageChange': percentage_change
+                        'PercentageChange': percentage_change,
+                        'AverageVolume': stock_info['averageVolume10days'],
+                        'MarketSector': stock_info['sector'],
+                        'MarketCap': stock_info['marketCap'],
+                        'OBV': data['OBV'].iloc[-1] if 'OBV' in data.columns else pd.NA
                     })
-    #Store in DataFrame                
+    
     results_df = pd.DataFrame(results)
     return results_df
 
-#Apply Dynamic Filtration 
+# Apply Dynamic Filtration and Backtest
 def dynamic_filtration_and_backtest(start_date, end_date, batch_size=30):
     results = []
-    end_date = pd.Timestamp(end_date) 
-    #Map ETFs
+    end_date = pd.Timestamp(end_date)
     etf_to_sector = {
         'XLY': 'Consumer Cyclical',
         'XLP': 'Consumer Defensive',
@@ -203,52 +354,56 @@ def dynamic_filtration_and_backtest(start_date, end_date, batch_size=30):
         'XLU': 'Utilities',
         'XLC': 'Communication Services'
     }
-    #Iterate over specified dates
-    date_range = pd.date_range(start=start_date, end=end_date, freq=f'{batch_size}D') #Set range
+    date_range = pd.date_range(start=start_date, end=end_date, freq=f'{batch_size}D')
     for current_date in date_range:
         next_date = current_date + datetime.timedelta(days=batch_size)
         if next_date > end_date:
             next_date = end_date
         current_date_str = current_date.strftime('%Y-%m-%d')
         next_date_str = next_date.strftime('%Y-%m-%d')
-        #Apply Filtration methods
+
         filtered_data = complete_data[
-            (complete_data['marketCap'] > 300000000) & #Market Cap
-            (complete_data['averageVolume10days'] > 500000) #Average Volume
+            (complete_data['marketCap'] > 300000000) & 
+            (complete_data['averageVolume10days'] > 500000)
         ].copy()
-        filtered_data['relativeVolume'] = filtered_data['volume'] / filtered_data['averageVolume10days']
-        filtered_data = filtered_data[filtered_data['relativeVolume'] > 2] #Relative Volume
-        #Trending Sectors
+        filtered_data = filtered_data[filtered_data['OBV'] > 0]
+
         etf_data = {}
         for symbol in etf_to_sector.keys():
             etf = yf.Ticker(symbol)
             data = etf.history(start=(current_date - datetime.timedelta(days=90)).strftime('%Y-%m-%d'), end=current_date_str)
             etf_data[symbol] = data['Close']
         etf_df = pd.DataFrame(etf_data)
-        returns = (etf_df.iloc[-1] / etf_df.iloc[0] - 1) * 100 #Calculate percentage
-        top_5_etfs = returns.sort_values(ascending=False).head(5)
+        returns = (etf_df.iloc[-1] / etf_df.iloc[0] - 1) * 100
+        top_5_etfs = returns.sort_values(ascending=False).head(3)
         top_sectors = [etf_to_sector[etf] for etf in top_5_etfs.index if etf in etf_to_sector]
         filtered_data = filtered_data[filtered_data['sector'].isin(top_sectors)]
-        filtered_data = filtered_data.sort_values(by='marketCap', ascending=False) #Sort by Market Cap
-        #Create DataFrame to store results
+        filtered_data = filtered_data.sort_values(by='marketCap', ascending=False)
+
         basic_filtration = filtered_data.copy()
         basic_filtration.set_index('symbol', inplace=True)
         print(f"Filtering completed for date: {current_date_str}, filtered stocks: {basic_filtration.index}")
-        backtest_results = optimized_backtest(basic_filtration, current_date, next_date) 
+        backtest_results = optimized_backtest(basic_filtration, current_date, next_date)
         results.extend(backtest_results.to_dict('records'))
-    results_df = pd.DataFrame(results) 
+    
+    results_df = pd.DataFrame(results)
     return results_df
-#Define Backtest Period
+
+# Define Backtest Period
 start_date = (datetime.datetime.now() - datetime.timedelta(days=2*365)).date()
 end_date = datetime.datetime.now().date()
 backtest_results = dynamic_filtration_and_backtest(start_date, end_date)
 print(f"Number of results: {len(backtest_results)}")
 print("Backtest Results (first 50 rows):")
 print(backtest_results.head(50))
-average_return = backtest_results['PercentageChange'].mean() #Calculate Average Returns
-print(f"Average Return: {average_return:.2f}%")
-#Save CSV File
-results_file_path = '/Users/ryangalitzdorfer/Downloads/Market Machine/Data Collection/Backtest_Results.csv'
+
+if not backtest_results.empty:
+    average_return = backtest_results['PercentageChange'].mean()  # Calculate Average Returns
+    print(f"Average Return: {average_return:.2f}%")
+else:
+    print("No valid backtest results to calculate the average return.")
+
+# Save CSV File
+results_file_path = '/Users/ryangalitzdorfer/Downloads/Market Machine/Stock Filtration/Backtest_Results.csv'
 backtest_results.to_csv(results_file_path, index=False)
 print(f"Results saved to: {results_file_path}")
-
