@@ -2,8 +2,13 @@
 import yfinance as yf #Financial Analysis
 import pandas as pd #DataFrames
 import datetime #Timestamps
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed #Parallel Processing
 import talib #Technical Analysis
+from ta.momentum import RSIIndicator #Backtest
+from ta.trend import ADXIndicator #Backtest
+import multiprocessing #Backtest
+
 
 
 ##DATA COLLECTION
@@ -19,16 +24,16 @@ print(f"Extracted {len(tickers)} Tickers.") #How many Tickers are there
 yesterdays_data = pd.DataFrame()
 
 #Timing
-now = datetime.datetime.now()
+now = datetime.now()
 market_close_time = now.replace(hour=16, minute=0, second=0, microsecond=0) #Get Last Day's Close
 if now > market_close_time: 
     yesterday = now
 else:
-    yesterday = now - datetime.timedelta(days=1)
+    yesterday = now - timedelta(days=1)
 if yesterday.weekday() == 5:  # Saturday
-    yesterday = yesterday - datetime.timedelta(days=1)
+    yesterday = yesterday - timedelta(days=1)
 elif yesterday.weekday() == 6:  # Sunday
-    yesterday = yesterday - datetime.timedelta(days=2)
+    yesterday = yesterday - timedelta(days=2)
 yesterday_str = yesterday.strftime('%Y-%m-%d')
 today_str = now.strftime('%Y-%m-%d')
 print(f"Fetching data for {yesterday_str}.")
@@ -38,14 +43,15 @@ def fetch_data(ticker):
     print(f"Processing Ticker: {ticker}") 
     try:
         stock = yf.Ticker(ticker) #Get data for Ticker
-        hist = stock.history(start=(yesterday - datetime.timedelta(days=50)).strftime('%Y-%m-%d'), end=today_str) #Used for OBV
+        hist = stock.history(start=(yesterday - timedelta(days=50)).strftime('%Y-%m-%d'), end=today_str) #Used for OBV
         if not hist.empty and len(hist) >= 35: #Ensure not empty date
             print(f"Data Fetched for {ticker}.")
             hist['symbol'] = ticker
             hist['marketCap'] = stock.info.get('marketCap', 'N/A') #Market Cap
             hist['sector'] = stock.info.get('sector', 'N/A') #Sector
             hist['averageVolume10days'] = stock.info.get('averageVolume10days', 'N/A') #Volume over last 10 Days
-            hist['adx'] = talib.ADX(hist['High'], hist['Low'], hist['Close'], timeperiod=14)
+            hist['ADX'] = talib.ADX(hist['High'], hist['Low'], hist['Close'], timeperiod=14)
+            hist['RSI'] = talib.RSI(hist['Close'], timeperiod=14)
             #Keep Last Day's Data
             last_day_data = hist.iloc[-1:]
             return last_day_data
@@ -71,7 +77,7 @@ yesterdays_data['marketCap'] = pd.to_numeric(yesterdays_data['marketCap'], error
 yesterdays_data['averageVolume10days'] = pd.to_numeric(yesterdays_data['averageVolume10days'], errors='coerce') #Numeric
 print("Data types in DataFrame before conversion:")
 print(yesterdays_data.dtypes)
-yesterdays_data = yesterdays_data[['Date', 'Open', 'Close', 'Volume', 'symbol', 'marketCap', 'sector', 'averageVolume10days', 'adx']] #Relevant Columns
+yesterdays_data = yesterdays_data[['Date', 'Open', 'Close', 'Volume', 'symbol', 'marketCap', 'sector', 'averageVolume10days', 'ADX', 'RSI']] #Relevant Columns
 output_file_path = '/Users/ryangalitzdorfer/Downloads/Market Machine/Stock Filtration/Yesterdays_Stock_Data.csv' #File Path
 yesterdays_data.to_csv(output_file_path, index=False) #Save to Csv
 print(f"Data Fetched & Saved to: '{output_file_path}'")
@@ -101,7 +107,7 @@ for symbol in etf_symbols: #Track ETF Performances
 etf_df = pd.DataFrame(etf_data) #Save into DataFrame
 returns = (etf_df.iloc[-1] / etf_df.iloc[0] - 1) * 100  #Calculate Return as a Percentage
 top_3_etfs = returns.sort_values(ascending=False).head(3) #Sort the returns to find the top 3 performing ETFs
-print("Top 5 Performing ETFs over the Last 3 Months: ") #Display the top 5 ETFs and their performances
+print("Top 3 Performing ETFs over the Last 3 Months: ") #Display the top 5 ETFs and their performances
 print(top_3_etfs.head()) 
 #Map ETFs to their sectors
 etf_to_sector = {
@@ -126,284 +132,174 @@ print(f"Number of Stocks After Sector Filter: {len(filtered_by_sector)}")
 #FILTER 4: ADX (Momentum)
 filtered_by_adx = filtered_by_sector[filtered_by_sector['ADX'] > 35] #High Momentum
 print(f"Number of Stocks After ADX Filter: {len(filtered_by_adx)}")
-print(filtered_by_adx.head(50)[['symbol', 'Date', 'marketCap', 'averageVolume10days','sector', 'Open', 'Close', 'ADX']])
 
 #Filter 5: RSI (Direction)
+filtered_by_rsi = filtered_by_adx[filtered_by_adx['RSI'] > 50] #Upwards Direction
+print(f"Number of Stocks After RSI Filter: {len(filtered_by_rsi)}")
+print(filtered_by_rsi.head(50)[['symbol', 'Date', 'marketCap', 'averageVolume10days', 'sector', 'Open', 'Close', 'ADX', 'RSI']])
 
 
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-##BACKTEST
+##Backtest
 import pandas as pd
-import numpy as np
 import yfinance as yf
-import datetime
-import talib as ta
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import multiprocessing
+from datetime import datetime, timedelta
+from ta.momentum import RSIIndicator
+from ta.trend import ADXIndicator
+from concurrent.futures import ThreadPoolExecutor
 
-# OBV Calculation Function
-def calculate_obv(data):
-    if 'Close' not in data.columns or 'Volume' not in data.columns:
-        print("Missing 'Close' or 'Volume' columns in data.")
-        return data
-    data['OBV'] = ta.OBV(data['Close'], data['Volume'])
-    data['OBV_Trend'] = data['OBV'].diff().apply(lambda x: 2 if x > 5 else -2 if x < -5 else 1 if x > 0 else -1 if x < 0 else 0)
-    data['OBV_Trend_Sum'] = data['OBV_Trend'].rolling(window=10).sum()
+# Define the function to fetch historical data
+def fetch_data_in_batches(tickers, start_date, end_date, batch_size=50):
+    data = []
+    tickers_list = tickers.tolist()
+    for i in range(0, len(tickers_list), batch_size):
+        batch = tickers_list[i:i + batch_size]
+        batch_data = yf.download(batch, start=start_date, end=end_date)
+        data.append(batch_data)
+    return pd.concat(data)
+
+# Calculate RSI
+def calculate_rsi(data, window=14):
+    rsi = RSIIndicator(data['Close'], window=window)
+    data['RSI'] = rsi.rsi()
     return data
 
-# Fetch Historical Data
-def fetch_historical_data(symbols, start_date, end_date):
-    data = {}
-    num_cores = multiprocessing.cpu_count()
-    max_workers = min(2 * num_cores, 50)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(yf.Ticker(symbol).history, start=start_date, end=end_date): symbol for symbol in symbols}
-        for future in as_completed(futures):
-            symbol = futures[future]
-            try:
-                data[symbol] = future.result()
-            except Exception as e:
-                print(f"Error fetching data for {symbol}: {e}")
+# Calculate ADX
+def calculate_adx(data, window=14):
+    adx = ADXIndicator(data['High'], data['Low'], data['Close'], window=window)
+    data['ADX'] = adx.adx()
     return data
 
-# Optimized Backtest Function
-def optimized_backtest(df, start_date, end_date, lookback_period=5):
-    results = []
-    end_date = pd.Timestamp(end_date)
-    date_range = pd.date_range(start=start_date, end=end_date - datetime.timedelta(days=lookback_period))
-    symbols = df.index.unique()
-    print(f"Fetching historical data for symbols: {symbols}")
-    historical_data = fetch_historical_data(symbols, start_date, end_date)
+# Calculate average volume
+def calculate_avg_volume(data, window=10):
+    data['averageVolume10days'] = data['Volume'].rolling(window=window).mean()
+    return data
 
-    for current_date in date_range:
-        current_date_str = current_date.strftime('%Y-%m-%d')
-        next_date = current_date + datetime.timedelta(days=lookback_period)
-        next_date_str = next_date.strftime('%Y-%m-%d')
+# Calculate returns for holding period
+def calculate_returns(start_price, end_price):
+    return (end_price - start_price) / start_price
 
-        if next_date > end_date:
-            break
+# Define the time periods for the backtest
+end_date = datetime.now()
+start_date = end_date - timedelta(days=90)
 
-        print(f"Backtesting for period: {current_date_str} to {next_date_str}")
+# Fetch ETF data for the previous 3 months
+etf_start_date = start_date - timedelta(days=90)
+etf_symbols = ['XLY', 'XLP', 'XLE', 'XLF', 'XLV', 'XLI', 'XLK', 'XLB', 'XLRE', 'XLU', 'XLC']
+etf_data = {symbol: yf.Ticker(symbol).history(start=etf_start_date, end=start_date)['Close'] for symbol in etf_symbols}
+etf_df = pd.DataFrame(etf_data)
+etf_returns = (etf_df.iloc[-1] / etf_df.iloc[0] - 1) * 100
+top_3_etfs = etf_returns.sort_values(ascending=False).head(3)
+etf_to_sector = {
+    'XLY': 'Consumer Cyclical', 'XLP': 'Consumer Defensive', 'XLE': 'Energy',
+    'XLF': 'Financial Services', 'XLV': 'Healthcare', 'XLI': 'Industrials',
+    'XLK': 'Technology', 'XLB': 'Basic Materials', 'XLRE': 'Real Estate',
+    'XLU': 'Utilities', 'XLC': 'Communication Services'
+}
+top_sectors = [etf_to_sector[etf] for etf in top_3_etfs.index if etf in etf_to_sector]
 
-        for symbol in symbols:
-            data = historical_data.get(symbol)
-            if data is not None and not data.empty:
-                data_slice = data.loc[current_date_str:next_date_str]
-                if len(data_slice) > 1:
-                    opening_price = data_slice['Open'].iloc[0]
-                    closing_price = data_slice['Close'].iloc[-1]
-                    price_change = closing_price - opening_price
-                    percentage_change = (price_change / opening_price) * 100
+# Fetch historical data for the entire stock universe
+all_tickers = yesterdays_data['symbol'].unique()
+historical_data = fetch_data(all_tickers, start_date, end_date)
 
-                    print(f"Symbol: {symbol}, Opening Price: {opening_price}, Closing Price: {closing_price}, Price Change: {price_change}, Percentage Change: {percentage_change}")
-                    
-                    stock_info = df.loc[symbol]
+# Initialize an empty dataframe to store results
+results = pd.DataFrame(columns=['Date', 'Symbol', 'Open_Price', 'Close_Price_5d', 'Return',
+                                'RSI', 'ADX', 'Sector', 'MarketCap', 'AverageVolume'])
 
-                    results.append({
-                        'Date': current_date_str,
-                        'Symbol': symbol,
-                        'OpeningPrice': opening_price,
-                        'ClosingPrice': closing_price,
-                        'PriceChange': price_change,
-                        'PercentageChange': percentage_change,
-                        'AverageVolume': stock_info['averageVolume10days'],
-                        'MarketSector': stock_info['sector'],
-                        'MarketCap': stock_info['marketCap'],
-                        'OBV': data['OBV'].iloc[-1] if 'OBV' in data.columns else pd.NA
-                    })
-    
-    results_df = pd.DataFrame(results)
-    return results_df
+# Define the holding period
+holding_period = 5  # Number of days stock is held
 
-# Apply Dynamic Filtration and Backtest
-def dynamic_filtration_and_backtest(start_date, end_date, batch_size=30):
-    results = []
-    end_date = pd.Timestamp(end_date)
-    etf_to_sector = {
-        'XLY': 'Consumer Cyclical',
-        'XLP': 'Consumer Defensive',
-        'XLE': 'Energy',
-        'XLF': 'Financial Services',
-        'XLV': 'Healthcare',
-        'XLI': 'Industrials',
-        'XLK': 'Technology',
-        'XLB': 'Basic Materials',
-        'XLRE': 'Real Estate',
-        'XLU': 'Utilities',
-        'XLC': 'Communication Services'
-    }
-    date_range = pd.date_range(start=start_date, end=end_date, freq=f'{batch_size}D')
-    for current_date in date_range:
-        next_date = current_date + datetime.timedelta(days=batch_size)
-        if next_date > end_date:
-            next_date = end_date
-        current_date_str = current_date.strftime('%Y-%m-%d')
-        next_date_str = next_date.strftime('%Y-%m-%d')
+# Define the function to process each date
+def process_date(date):
+    date_results = []
 
-        filtered_data = complete_data[
-            (complete_data['marketCap'] > 300000000) & 
-            (complete_data['averageVolume10days'] > 500000)
-        ].copy()
-        filtered_data = filtered_data[filtered_data['OBV'] > 0]
+    # Calculate indicators dynamically
+    date_data = historical_data.loc[:date].copy()
+    if date_data.empty:
+        return date_results
 
-        etf_data = {}
-        for symbol in etf_to_sector.keys():
-            etf = yf.Ticker(symbol)
-            data = etf.history(start=(current_date - datetime.timedelta(days=90)).strftime('%Y-%m-%d'), end=current_date_str)
-            etf_data[symbol] = data['Close']
-        etf_df = pd.DataFrame(etf_data)
-        returns = (etf_df.iloc[-1] / etf_df.iloc[0] - 1) * 100
-        top_5_etfs = returns.sort_values(ascending=False).head(3)
-        top_sectors = [etf_to_sector[etf] for etf in top_5_etfs.index if etf in etf_to_sector]
-        filtered_data = filtered_data[filtered_data['sector'].isin(top_sectors)]
-        filtered_data = filtered_data.sort_values(by='marketCap', ascending=False)
+    date_data = date_data.groupby('symbol').apply(calculate_rsi)
+    date_data = date_data.groupby('symbol').apply(calculate_adx)
+    date_data = date_data.groupby('symbol').apply(calculate_avg_volume)
 
-        basic_filtration = filtered_data.copy()
-        basic_filtration.set_index('symbol', inplace=True)
-        print(f"Filtering completed for date: {current_date_str}, filtered stocks: {basic_filtration.index}")
-        backtest_results = optimized_backtest(basic_filtration, current_date, next_date)
-        results.extend(backtest_results.to_dict('records'))
-    
-    results_df = pd.DataFrame(results)
-    return results_df
+    # Get previous day's data
+    yesterday = date - timedelta(days=1)
+    yesterday_data = date_data[date_data.index.get_level_values(1) == yesterday]
 
-# Define Backtest Period
-start_date = (datetime.datetime.now() - datetime.timedelta(days=2*365)).date()
-end_date = datetime.datetime.now().date()
-backtest_results = dynamic_filtration_and_backtest(start_date, end_date)
-print(f"Number of results: {len(backtest_results)}")
-print("Backtest Results (first 50 rows):")
-print(backtest_results.head(50))
+    if yesterday_data.empty:
+        return date_results
 
-if not backtest_results.empty:
-    average_return = backtest_results['PercentageChange'].mean()  # Calculate Average Returns
-    print(f"Average Return: {average_return:.2f}%")
-else:
-    print("No valid backtest results to calculate the average return.")
+    # Dynamically fetch market cap and sector for each stock
+    market_cap_sector = {}
+    for symbol in yesterday_data['symbol'].unique():
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        market_cap_sector[symbol] = {
+            'marketCap': info.get('marketCap', 0),
+            'sector': info.get('sector', 'Unknown')
+        }
+    yesterday_data['marketCap'] = yesterday_data['symbol'].map(lambda x: market_cap_sector[x]['marketCap'])
+    yesterday_data['sector'] = yesterday_data['symbol'].map(lambda x: market_cap_sector[x]['sector'])
 
-# Save CSV File
-results_file_path = '/Users/ryangalitzdorfer/Downloads/Market Machine/Stock Filtration/Backtest_Results.csv'
-backtest_results.to_csv(results_file_path, index=False)
-print(f"Results saved to: {results_file_path}")
+    # Apply filters
+    filtered_by_market_cap = yesterday_data[yesterday_data['marketCap'] > 300000000]
+    filtered_by_volume = filtered_by_market_cap[filtered_by_market_cap['averageVolume10days'] > 500000]
+    filtered_by_sector = filtered_by_volume[filtered_by_volume['sector'].isin(top_sectors)]
+
+    # Filter by ADX and RSI
+    filtered_by_adx = filtered_by_sector[filtered_by_sector['ADX'] > 35]
+    filtered_by_rsi = filtered_by_adx[filtered_by_adx['RSI'] > 50]
+
+    for _, row in filtered_by_rsi.iterrows():
+        symbol = row['symbol']
+
+        try:
+            # Get the open price on the current date and the close price 5 days later
+            open_price = historical_data.loc[(symbol, date), 'Open']
+            end_date_holding = date + timedelta(days=holding_period)
+
+            if end_date_holding not in historical_data.index.get_level_values(1):
+                continue
+
+            close_price_5d = historical_data.loc[(symbol, end_date_holding), 'Close']
+            stock_return = calculate_returns(open_price, close_price_5d)
+
+            date_results.append({
+                'Date': date,
+                'Symbol': symbol,
+                'Open_Price': open_price,
+                'Close_Price_5d': close_price_5d,
+                'Return': stock_return,
+                'RSI': row['RSI'],
+                'ADX': row['ADX'],
+                'Sector': row['sector'],
+                'MarketCap': row['marketCap'],
+                'AverageVolume': row['averageVolume10days']
+            })
+
+        except KeyError as e:
+            print(f"KeyError for {symbol} on {date}: {e}")
+        except Exception as e:
+            print(f"Error processing {symbol} on {date}: {e}")
+
+    return date_results
+
+# Use ThreadPoolExecutor to parallelize the processing
+with ThreadPoolExecutor(max_workers=8) as executor:
+    futures = [executor.submit(process_date, date) for date in pd.date_range(start_date, end_date - timedelta(days=holding_period), freq='B')]
+    for future in as_completed(futures):
+        results = results.append(future.result(), ignore_index=True)
+
+# Analyze the results
+average_return = results['Return'].mean()
+total_return = (1 + results['Return']).prod() - 1
+
+print(f"Average Return: {average_return * 100:.2f}%")
+print(f"Total Return: {total_return * 100:.2f}%")
+print(results.head(50))
+
+# Save results to CSV for further analysis
+results.to_csv('/Users/ryangalitzdorfer/Downloads/Market Machine/Stock Filtration/Backtest_Results.csv', index=False)
