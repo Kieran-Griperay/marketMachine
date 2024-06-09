@@ -176,7 +176,7 @@ def main():
     ticker_column = 'Ticker'
     etf_column = 'Corresponding ETF'
     sector_column = 'Sector'
-    lookback_start_date = pd.to_datetime('2019-10-01') 
+    lookback_start_date = pd.to_datetime('2013-10-01') 
     final_end_date = pd.to_datetime('2023-12-31')
     tickers = df[ticker_column].unique()
     ticker_info_list = [(ticker, df, ticker_column, etf_column, sector_column, lookback_start_date, final_end_date) for ticker in tickers] #Create List of Tuples
