@@ -23,8 +23,9 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 # Constants
 N_STEPS = 50
 LOOKUP_STEP = 1
-FUTURE_STEP = [1, 2, 3, 4, 5]
 models = {}
+LOOKUP_STEPS = [5, 10, 20, 30]
+
 scalers = {}
 tf.get_logger().setLevel('ERROR')
 # Determine the current week number
@@ -35,23 +36,23 @@ year_number = now.isocalendar().year
 month_number = todays_date.month
 
 # Load data
-filtered_symbols_df = pd.read_csv('Stock Filtration/Backtesting/Results/Best_Stocks_Today.csv')
-print(filtered_symbols_df)
-tickers = filtered_symbols_df['Ticker'].tolist()
-workers = len(tickers) 
-print(f"Workers: {workers}")
+# filtered_symbols_df = pd.read_csv('filtered_symbols.csv')
+# tickers = filtered_symbols_df['symbol'].tolist()
+# workers = len(tickers) 
+tickers = ["AAPL", "TSM", "ABBV", "BABA", "GOOGL", "AMZN", "ENPH"]
+workers = min(os.cpu_count(), len(tickers) * len(LOOKUP_STEPS))
 
 
 dfs = {}
 for t in tickers:
     data = yf.Ticker(t)
-    df = data.history(period='8y', interval='1d')
+    df = data.history(period='10y', interval='1d')
     dfs[t] = df
 
 # Parallel data download
 def download_data(ticker):
     data = yf.Ticker(ticker)
-    return data.history(period='8y', interval='1d')
+    return data.history(period='10y', interval='1d')
 
 # Use ThreadPoolExecutor for parallel data fetching
 with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -106,21 +107,23 @@ def add_technical_indicators(df):
     return df
 
 
-def create_dataset(X, Y, n_steps):
+def create_dataset(X, Y, n_steps, lookup_step):
     """
     Creates dataset for LSTM model training.
     Parameters:
     X (array): Input features.
     Y (array): Target output.
     n_steps (int): Number of steps/lookback period.
+    lookup_step (int): Number of steps to look ahead.
     Returns:
     tuple: Tuple containing feature and target datasets.
     """
     Xs, Ys = [], []
-    for i in range(len(X) - n_steps):
+    for i in range(len(X) - n_steps - lookup_step):
         Xs.append(X[i:(i + n_steps)])
-        Ys.append(Y[i + n_steps])
+        Ys.append(Y[i + n_steps + lookup_step])
     return np.array(Xs), np.array(Ys)
+
 
 def showNewModelPredictions(dfs, ticker, model, scalers):
     # Base directory to save plots
@@ -200,13 +203,14 @@ def check_data_consistency(data_frames):
         info_dict[ticker] = {'Features': features, 'Rows': rows}
     return info_dict
 
-def build_and_train_model(ticker, data, n_steps, test_size=0.1, random_state=42):
+def build_and_train_model(ticker, data, n_steps, lookup_step, test_size=0.1, random_state=42):
     """
     Builds and trains LSTM model.
     Parameters:
     ticker (str): The ticker symbol.
     data (DataFrame): The DataFrame containing training data.
     n_steps (int): Number of timesteps to look back.
+    lookup_step (int): Number of steps to look ahead.
     Returns:
     tuple: Model and scaler objects, validation loss.
     """
@@ -215,7 +219,7 @@ def build_and_train_model(ticker, data, n_steps, test_size=0.1, random_state=42)
     scaler_target = MinMaxScaler()
     features = scaler_feature.fit_transform(data.drop(['Close'], axis=1))
     target = scaler_target.fit_transform(data[['Close']].values)
-    X, Y = create_dataset(features, target.ravel(), n_steps)
+    X, Y = create_dataset(features, target.ravel(), n_steps, lookup_step)
 
     if len(X) < 10:
         raise ValueError("Not enough data for training and validation.")
@@ -232,7 +236,7 @@ def build_and_train_model(ticker, data, n_steps, test_size=0.1, random_state=42)
     ])
     model.compile(loss='mean_squared_error', optimizer='adam', metrics=['mae'])
     early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
-    history = model.fit(X_train, Y_train, epochs=35, batch_size=batch_size, verbose=1,
+    history = model.fit(X_train, Y_train, epochs=40, batch_size=batch_size, verbose=1,
                         validation_data=(X_val, Y_val), callbacks=[early_stopping])
 
     val_loss = history.history.get('val_loss', [None])[-1]
@@ -244,8 +248,7 @@ def build_and_train_model(ticker, data, n_steps, test_size=0.1, random_state=42)
     
     # Save metrics to a text file
     with open('model_metrics.txt', 'a') as f:
-        f.write(f"Ticker: {ticker} | Month: {month_number} | Val Loss: {val_loss} | MAE: {mae} | MSE: {mse} | RMSE: {rmse}\n")
-
+        f.write(f"Ticker: {ticker} | Month: {month_number} | Lookup Step: {lookup_step} | Val Loss: {val_loss} | MAE: {mae} | MSE: {mse} | RMSE: {rmse} Model: | DeusExMachina \n")
 
     return model, scaler_feature, scaler_target, val_loss, mae, mse, rmse
 
@@ -260,47 +263,51 @@ for ticker, df in dfs.items():
 # Model training and prediction
 get_action = lambda predicted_price, current_price: "BUY" if predicted_price > current_price + current_price * .005 else "HOLD"
 
-def process_ticker(ticker, predicted_price):
+def process_ticker(ticker, predicted_price, lookup_step):
     current_price = get_current_price(ticker)
     action = get_action(predicted_price, current_price)
     calculated_increase = calculate_percentage_increase(ticker, current_price, predicted_price)
-    print(f"Stock: {ticker} | Predicted Close Price: {predicted_price} | Current Price: {round(current_price,5)} | Percent change: {round(calculated_increase, 4)}%| {action}")
+    print(f"Stock: {ticker} | Lookup Step: {lookup_step} | Predicted Close Price: {predicted_price} | Current Price: {round(current_price, 5)} | Percent change: {round(calculated_increase, 4)}% | {action}")
 
 percentage_increase = {}
 
 def train_model_for_ticker(ticker, df):
-    weekly_model_path = f"models/{year_number}_{month_number}_{ticker}_model.h5"
-    scaler_feature_path = f"scalers/{year_number}_{month_number}_{ticker}_scaler_feature.pkl"
-    scaler_target_path = f"scalers/{year_number}_{month_number}_{ticker}_scaler_target.pkl"
-    try:
-        model = load_model(weekly_model_path)
-        scaler_feature = joblib.load(scaler_feature_path)
-        scaler_target = joblib.load(scaler_target_path)
-    except (IOError, FileNotFoundError):
-        print(f"Training model for {ticker}")
-        model, scaler_feature, scaler_target, val_loss, mae, mse, rmse = build_and_train_model(ticker, df, N_STEPS)
-        model.save(weekly_model_path)
-        joblib.dump(scaler_feature, scaler_feature_path)
-        joblib.dump(scaler_target, scaler_target_path)
-        print(f"Ticker: {ticker} | Val Loss: {val_loss} | MAE: {mae} | MSE: {mse} | RMSE: {rmse}")
-    models[ticker] = model
-    scalers[ticker] = (scaler_feature, scaler_target)
-    features = scaler_feature.transform(df.drop(['Close'], axis=1))
-    current_sequence = features[-N_STEPS:].reshape(1, N_STEPS, features.shape[1])
-    K.clear_session()
-    predicted_scaled = model.predict(current_sequence, verbose=0)
-    predicted_price = scaler_target.inverse_transform(predicted_scaled)
-    process_ticker(ticker, predicted_price)
-    price = get_yesterday_price(ticker)
-    predicted_increase = calculate_percentage_increase(ticker, price, predicted_price)
-    return ticker, predicted_increase
+    models[ticker] = {}
+    scalers[ticker] = {}
+    for lookup_step in LOOKUP_STEPS:
+        weekly_model_path = f"models/deus_{year_number}_{month_number}_{ticker}_model_{lookup_step}.h5"
+        scaler_feature_path = f"scalers/deus_{year_number}_{month_number}_{ticker}_scaler_feature_{lookup_step}.pkl"
+        scaler_target_path = f"scalers/deus_{year_number}_{month_number}_{ticker}_scaler_target_{lookup_step}.pkl"
+        try:
+            model = load_model(weekly_model_path)
+            scaler_feature = joblib.load(scaler_feature_path)
+            scaler_target = joblib.load(scaler_target_path)
+        except (IOError, FileNotFoundError):
+            print(f"Training model for {ticker} with lookup step {lookup_step}")
+            model, scaler_feature, scaler_target, val_loss, mae, mse, rmse = build_and_train_model(ticker, df, N_STEPS, lookup_step)
+            model.save(weekly_model_path)
+            joblib.dump(scaler_feature, scaler_feature_path)
+            joblib.dump(scaler_target, scaler_target_path)
+            print(f"Ticker: {ticker} | Lookup Step: {lookup_step} | Val Loss: {val_loss} | MAE: {mae} | MSE: {mse} | RMSE: {rmse}")
+        models[ticker][lookup_step] = model
+        scalers[ticker][lookup_step] = (scaler_feature, scaler_target)
+        
+        features = scaler_feature.transform(df.drop(['Close'], axis=1))
+        current_sequence = features[-N_STEPS:].reshape(1, N_STEPS, features.shape[1])
+        K.clear_session()
+        predicted_scaled = model.predict(current_sequence, verbose=0)
+        predicted_price = scaler_target.inverse_transform(predicted_scaled)
+        process_ticker(ticker, predicted_price, lookup_step)
+        price = get_yesterday_price(ticker)
+        predicted_increase = calculate_percentage_increase(ticker, price, predicted_price)
+        percentage_increase[f"{ticker}_{lookup_step}"] = predicted_increase
 
-percentage_increase = {}
+
 if __name__ == '__main__':
-
+    percentage_increase = {}
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(train_model_for_ticker, ticker, df): ticker for ticker, df in dfs.items()}
-        for future in concurrent.futures.as_completed(futures):  # Timeout after 600 seconds
+        for future in concurrent.futures.as_completed(futures):
             ticker = futures[future]
             try:
                 result = future.result()
@@ -318,8 +325,9 @@ if __name__ == '__main__':
     sorted_percentage_increase_map = sorted(percentage_increase.items(), key=lambda item: item[1], reverse=True)
 
     for pair in sorted_percentage_increase_map:
-        print(f"Stock: {pair[0]}, Daily {'Increase' if pair[1] > 0 else 'Decrease'}: {round(pair[1], 3)}%")
+        ticker, lookup_step = pair[0].rsplit('_', 1)
+        print(f"Stock: {ticker}, Lookup Step: {lookup_step}, Daily {'Increase' if pair[1] > 0 else 'Decrease'}: {round(pair[1], 3)}%")
 
     for i in range(min(3, len(sorted_percentage_increase_map))):
-        tic = sorted_percentage_increase_map[i][0]
-        showNewModelPredictions(dfs, tic, models[tic], scalers[tic])
+        ticker, lookup_step = sorted_percentage_increase_map[i][0].rsplit('_', 1)
+        showNewModelPredictions(dfs, ticker, models[ticker][int(lookup_step)], scalers[ticker][int(lookup_step)])
