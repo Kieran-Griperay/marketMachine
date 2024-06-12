@@ -142,11 +142,6 @@ def create_dataframe(ticker, etf, sector, start_date, final_end_date):
     df_combined['Sector'] = sector
     df_combined['SP'] = trending_dates.reindex(data.index, fill_value=0)
     df_combined['Market Cap'] = df[df[ticker_column] == ticker]['Market Cap'].values[0]
-    df_combined[['ADX', 'RSI', 'EMA_20', 'EMA_50', 'Upper_BBand', 'Middle_BBand', 'Lower_BBand', #Shift 1 Day to get Yesterday's Information
-                 'MACD', 'MACD_Signal', 'MACD_Hist', 'ATR', 'CCI', 'Williams_%R', 'MFI', 'OBV', 'SP']] = df_combined[['ADX', 'RSI', 'EMA_20', 'EMA_50',
-                                                                     'Upper_BBand', 'Middle_BBand', 'Lower_BBand',
-                                                                     'MACD', 'MACD_Signal', 'MACD_Hist', 'ATR', 'CCI',
-                                                                     'Williams_%R', 'MFI', 'OBV', 'SP']].shift(1)
     df_combined = df_combined.dropna(subset=['ADX', 'RSI', 'EMA_20', 'EMA_50', 'Upper_BBand', 'Middle_BBand', #Drop NaN Rows
                                              'Lower_BBand', 'MACD', 'MACD_Signal', 'MACD_Hist', 'ATR', 'CCI', 'Williams_%R',
                                              'MFI', 'OBV', 'SP'])
