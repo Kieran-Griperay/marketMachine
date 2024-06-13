@@ -1,4 +1,4 @@
-#Import Libraries
+#Import Libraries 
 import pandas as pd #DataFrames
 import yfinance as yf #Financial Analysis
 import talib #Technical Analysis
