@@ -1,55 +1,117 @@
 import pandas as pd
+import numpy as np
 import logging
-import os
+import yfinance as yf
+from datetime import datetime
 
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=logging.INFO)
 
-# Define directories
-individual_data_dir = 'Stock Filtration/Individual Stock Data'
-results_dir = 'Stock Filtration/Backtesting/Results'
+class Portfolio:
+    def __init__(self, initial_balance=100000):
+        self.balance = initial_balance
+        self.stocks = {}  # Dictionary to hold stock symbol and quantity
+        self.transactions = []  # List to hold transactions
+        self.history = pd.DataFrame(columns=['Date', 'Balance'])
 
-def filter_best_stocks(data):
-    try:
-        # Define criteria for "best" stocks (customize as needed)
-        best_stocks = data[(data['MACD'] > data['MACD_Signal']) & 
-                           (data['RSI'] < 60) & 
-                           (data['ADX'] > 35)]
-        return best_stocks
-    except Exception as e:
-        logging.error(f"Error filtering best stocks: {e}")
-        return pd.DataFrame()
+    def buy_stock(self, ticker, quantity, price):
+        if price == 0:
+            logging.error(f"Price for {ticker} is not available. Skipping purchase.")
+            return False
 
-def process_stock_data_file(file_path):
-    try:
-        stock_df = pd.read_csv(file_path, index_col=0, parse_dates=True)
-        ticker = os.path.basename(file_path).split('_')[0]
-        stock_df['Ticker'] = ticker
-        
-        # Get the most recent data
-        most_recent_data = stock_df.iloc[-1:]
-        
-        best_stocks = filter_best_stocks(most_recent_data)
-        return best_stocks[['Ticker']] if not best_stocks.empty else pd.DataFrame()
-    except Exception as e:
-        logging.error(f"Error processing file {file_path}: {e}")
-        return pd.DataFrame()
+        total_cost = quantity * price
+        if total_cost > self.balance:
+            logging.error(f"Not enough balance to buy {quantity} shares of {ticker}")
+            return False
+        self.balance -= total_cost
+        if ticker in self.stocks:
+            self.stocks[ticker] += quantity
+        else:
+            self.stocks[ticker] = quantity
+        self.transactions.append((datetime.now(), 'BUY', ticker, quantity, price))
+        logging.info(f"Bought {quantity} shares of {ticker} at {price} each")
+        return True
 
-def main():
-    all_best_stocks = pd.DataFrame()
+    def sell_stock(self, ticker, quantity, price):
+        if ticker not in self.stocks or self.stocks[ticker] < quantity:
+            logging.error(f"Not enough shares to sell {quantity} shares of {ticker}")
+            return False
+        self.stocks[ticker] -= quantity
+        self.balance += quantity * price
+        self.transactions.append((datetime.now(), 'SELL', ticker, quantity, price))
+        logging.info(f"Sold {quantity} shares of {ticker} at {price} each")
+        return True
 
-    # Process all stock data files in the directory
-    for file_name in os.listdir(individual_data_dir):
-        file_path = os.path.join(individual_data_dir, file_name)
-        if os.path.isfile(file_path) and file_name.endswith('.csv'):
-            best_stocks = process_stock_data_file(file_path)
-            if not best_stocks.empty:
-                all_best_stocks = pd.concat([all_best_stocks, best_stocks], ignore_index=True)
+    def get_current_prices(self, tickers):
+        current_prices = {}
+        try:
+            for ticker in tickers:
+                stock = yf.Ticker(ticker)
+                price = stock.history(period='1d')['Close'][-1]
+                if not np.isnan(price):
+                    current_prices[ticker] = price
+            return current_prices
+        except Exception as e:
+            logging.error(f"Error fetching current prices: {e}")
+            return {}
 
-    # Save or display the best stocks for today
-    best_stocks_file_path = os.path.join(results_dir, 'Best_Stocks_Today.csv')
-    all_best_stocks[['Ticker']].drop_duplicates().to_csv(best_stocks_file_path, index=False)
-    print(f"Best Stocks for Today Saved at {best_stocks_file_path}")
-    print(all_best_stocks[['Ticker']].drop_duplicates())
+    def calculate_shares_for_amount(self, ticker, dollar_amount):
+        price = self.get_current_prices([ticker]).get(ticker, 0)
+        if price > 0:
+            return dollar_amount // price
+        else:
+            logging.error(f"Could not fetch price for {ticker}")
+            return 0
 
+    def get_portfolio_value(self, current_prices):
+        total_value = self.balance
+        for ticker, quantity in self.stocks.items():
+            total_value += quantity * current_prices.get(ticker, 0)
+        return total_value
+
+    def update_history(self, current_prices):
+        total_value = self.get_portfolio_value(current_prices)
+        new_record = pd.DataFrame([{'Date': datetime.now(), 'Balance': total_value}])
+        self.history = pd.concat([self.history, new_record], ignore_index=True)
+        logging.info(f"Portfolio value updated to {total_value}")
+
+    def get_portfolio_trend(self):
+        return self.history
+
+    def print_portfolio(self):
+        print(f"Balance: {self.balance}")
+        print("Stocks owned:")
+        for ticker, quantity in self.stocks.items():
+            print(f"{ticker}: {quantity} shares")
+
+# Example usage
 if __name__ == "__main__":
-    main()
+    portfolio = Portfolio()
+
+    # Simulating some stock tickers
+    tickers = ['AAPL', 'GOOGL', 'MSFT', 'ALGN', 'CYRX', 'EVH', 'FTRE', 'LAW', 'NAMS', 'RELY', 'REPL', 'U', 'UNIT']
+
+    # Fetching current prices
+    current_prices = portfolio.get_current_prices(tickers)
+    print("Current Prices:", current_prices)
+
+    # Buying stocks with a dollar amount
+    for ticker in tickers:
+        dollar_amount = 1000  # Example amount
+        shares_to_buy = portfolio.calculate_shares_for_amount(ticker, dollar_amount)
+        price = current_prices.get(ticker, 0)
+        if shares_to_buy > 0 and price > 0:
+            portfolio.buy_stock(ticker, shares_to_buy, price)
+
+    # Selling stocks
+    if 'AAPL' in current_prices and portfolio.stocks.get('AAPL', 0) >= 5:
+        portfolio.sell_stock('AAPL', 5, current_prices['AAPL'])
+
+    # Updating portfolio history
+    portfolio.update_history(current_prices)
+
+    # Printing portfolio
+    portfolio.print_portfolio()
+
+    # Getting portfolio trend
+    trend = portfolio.get_portfolio_trend()
+    print(trend)
